@@ -320,7 +320,7 @@
             border-top: 1px solid rgba(255,255,255,0.1);
             padding: 12px;
             padding-bottom: max(12px, env(safe-area-inset-bottom));
-            max-height: 45vh;
+            max-height: 40vh;
             overflow-y: auto;
             z-index: 70;
         }
@@ -459,6 +459,20 @@
             z-index: 200;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
+
+        /* Face counter badge */
+        .face-counter {
+            position: absolute;
+            top: 80px;
+            right: 20px;
+            background: rgba(0,255,136,0.9);
+            color: #000;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 14px;
+            z-index: 60;
+        }
     </style>
 </head>
 <body>
@@ -473,6 +487,9 @@
         <div id="videoArea">
             <video id="video" autoplay muted playsinline></video>
             <canvas id="compositeCanvas"></canvas>
+            
+            <!-- Face Counter -->
+            <div id="faceCounter" class="face-counter hidden">0 Faces</div>
             
             <!-- Flash effect -->
             <div id="flash" class="flash"></div>
@@ -539,36 +556,8 @@
 
         <!-- Results Panel -->
         <div id="resultsPanel">
-            <div id="noFace">No face detected. Point camera at a face.</div>
-            
-            <div id="faceData" class="hidden">
-                <div class="card">
-                    <div>
-                        <div class="card-label">Status</div>
-                        <div class="card-value" style="color: #00ff88;">Detected</div>
-                    </div>
-                    <div class="card-icon">✓</div>
-                </div>
-
-                <div class="grid-2">
-                    <div class="card">
-                        <div class="card-label">Age Range</div>
-                        <div class="card-value" id="ageVal" style="color: #3b82f6;">--</div>
-                    </div>
-                    <div class="card">
-                        <div class="card-label">Gender</div>
-                        <div class="card-value" id="genderVal" style="color: #a855f7;">--</div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div>
-                        <div class="card-label">Emotion</div>
-                        <div class="card-value" id="emotionVal" style="color: #fbbf24;">--</div>
-                    </div>
-                    <div class="card-icon" id="emotionIcon">😐</div>
-                </div>
-            </div>
+            <div id="noFace">No face detected. Point camera at faces.</div>
+            <div id="faceData" class="hidden"></div>
         </div>
     </div>
 
@@ -593,14 +582,17 @@
         let recordingStartTime = 0;
         let recordingTimer = null;
         
-        // Stabilization variables
-        let faceHistory = [];
-        const HISTORY_SIZE = 10;
-        const CONFIDENCE_THRESHOLD = 0.6;
-        let stableAge = null;
-        let stableGender = null;
-        let ageConfidenceCount = 0;
-        const AGE_LOCK_THRESHOLD = 5;
+        // Performance settings - optimized for speed
+        const MAX_FACES = 4;
+        let faceStabilizations = new Map();
+        let frameCount = 0;
+        const DETECT_EVERY_N_FRAMES = 3; // Detect every 3rd frame for better performance
+        let lastUIUpdate = 0;
+        const UI_UPDATE_INTERVAL = 300; // Update UI every 300ms
+        
+        // Use requestAnimationFrame for smooth rendering
+        let animationId = null;
+        let isProcessing = false;
 
         // Initialize
         async function init() {
@@ -611,7 +603,6 @@
                     faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
                 ]);
                 
-                // Enumerate cameras for better switching
                 await enumerateCameras();
                 
                 document.getElementById('loadingState').classList.add('hidden');
@@ -625,7 +616,6 @@
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 availableCameras = devices.filter(device => device.kind === 'videoinput');
-                console.log('Available cameras:', availableCameras.map(c => c.label));
             } catch (e) {
                 console.error('Failed to enumerate cameras:', e);
             }
@@ -644,7 +634,6 @@
                     currentStream.getTracks().forEach(track => track.stop());
                 }
 
-                // Try to get specific camera for mobile
                 let constraints = {
                     video: {
                         width: { ideal: 640 },
@@ -653,18 +642,14 @@
                     audio: true
                 };
 
-                // If we have multiple cameras, try to select by facing mode
                 if (availableCameras.length > 1) {
-                    // Find camera with matching label or use facingMode
                     const envCamera = availableCameras.find(c => 
                         c.label.toLowerCase().includes('back') || 
-                        c.label.toLowerCase().includes('rear') ||
-                        c.label.toLowerCase().includes('environment')
+                        c.label.toLowerCase().includes('rear')
                     );
                     const userCamera = availableCameras.find(c => 
                         c.label.toLowerCase().includes('front') || 
-                        c.label.toLowerCase().includes('user') ||
-                        c.label.toLowerCase().includes('selfie')
+                        c.label.toLowerCase().includes('user')
                     );
 
                     if (facingMode === 'environment' && envCamera) {
@@ -687,6 +672,7 @@
                 video.onloadedmetadata = () => {
                     video.play();
                     
+                    // Set canvas to video native resolution for quality
                     compositeCanvas.width = video.videoWidth;
                     compositeCanvas.height = video.videoHeight;
                     
@@ -701,7 +687,6 @@
                 };
             } catch (e) {
                 console.error('Camera error:', e);
-                // Fallback to simple constraints
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         video: true, 
@@ -729,13 +714,10 @@
         }
 
         async function switchCamera() {
-            // Toggle between available cameras
             if (availableCameras.length <= 1) {
-                // Simple toggle if we can't enumerate
                 const newMode = currentFacingMode === 'user' ? 'environment' : 'user';
                 await startCamera(newMode);
             } else {
-                // Cycle through available cameras
                 currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
                 const nextCamera = availableCameras[currentCameraIndex];
                 
@@ -752,21 +734,12 @@
                     currentStream = stream;
                     video.srcObject = stream;
                     
-                    // Update facing mode based on camera label
-                    if (nextCamera.label.toLowerCase().includes('back') || 
-                        nextCamera.label.toLowerCase().includes('rear')) {
-                        currentFacingMode = 'environment';
-                    } else {
-                        currentFacingMode = 'user';
-                    }
-
                     video.onloadedmetadata = () => {
                         video.play();
                         compositeCanvas.width = video.videoWidth;
                         compositeCanvas.height = video.videoHeight;
                     };
                 } catch (e) {
-                    console.error('Switch failed:', e);
                     showToast('Failed to switch camera');
                 }
             }
@@ -777,18 +750,22 @@
             flash.classList.add('active');
             setTimeout(() => flash.classList.remove('active'), 300);
 
-            // The composite canvas already has everything drawn on it
-            // Just need to save it
+            drawFrameToCanvas();
             saveCanvasImage();
+        }
+
+        function drawFrameToCanvas() {
+            compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            
+            if (lastDetectionResults && lastDetectionResults.length > 0) {
+                drawMultipleFaces(lastDetectionResults);
+            }
         }
 
         function saveCanvasImage() {
             try {
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                 const filename = `face-detector-photo-${timestamp}.jpg`;
-
-                // Ensure we draw the latest frame before saving
-                drawFrameToCanvas();
 
                 compositeCanvas.toBlob((blob) => {
                     if (!blob) {
@@ -807,10 +784,9 @@
                     
                     try {
                         a.click();
-                        showToast('Photo saved to Downloads!');
+                        showToast('Photo saved!');
                     } catch (clickErr) {
                         window.open(url, '_blank');
-                        showToast('Image opened - tap and hold to save');
                     }
                     
                     setTimeout(() => {
@@ -821,18 +797,7 @@
                 }, 'image/jpeg', 0.95);
                 
             } catch (err) {
-                console.error('Save error:', err);
-                showToast('Save failed. Try again.');
-            }
-        }
-
-        function drawFrameToCanvas() {
-            // Draw video frame
-            compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
-            
-            // Redraw detection if we have current data
-            if (lastDetectionResults && lastDetectionResults.length > 0) {
-                drawAnalysis(lastDetectionResults);
+                showToast('Save failed');
             }
         }
 
@@ -849,7 +814,8 @@
         function startVideoRecording() {
             if (!currentStream) return;
             
-            const canvasStream = compositeCanvas.captureStream(30);
+            // Use 24 FPS for smooth video while recording
+            const canvasStream = compositeCanvas.captureStream(24);
             
             const audioTrack = currentStream.getAudioTracks()[0];
             if (audioTrack) {
@@ -860,8 +826,7 @@
             const mimeTypes = [
                 'video/webm;codecs=vp9,opus',
                 'video/webm;codecs=vp8,opus',
-                'video/webm',
-                'video/mp4'
+                'video/webm'
             ];
             
             let selectedMimeType = '';
@@ -880,7 +845,7 @@
             try {
                 mediaRecorder = new MediaRecorder(canvasStream, {
                     mimeType: selectedMimeType,
-                    videoBitsPerSecond: 2500000
+                    videoBitsPerSecond: 2000000 // 2 Mbps for good quality
                 });
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -897,19 +862,15 @@
                 isRecording = true;
                 recordingStartTime = Date.now();
                 
-                const btn = document.getElementById('captureBtn');
-                btn.classList.add('recording');
-                
-                const timer = document.getElementById('recTimer');
-                timer.classList.add('active');
+                document.getElementById('captureBtn').classList.add('recording');
+                document.getElementById('recTimer').classList.add('active');
                 
                 updateRecordingTimer();
                 recordingTimer = setInterval(updateRecordingTimer, 1000);
                 
-                showToast('Recording... Tap to stop');
+                showToast('Recording...');
             } catch (e) {
                 showToast('Failed to start recording');
-                console.error(e);
             }
         }
 
@@ -919,11 +880,8 @@
             mediaRecorder.stop();
             isRecording = false;
             
-            const btn = document.getElementById('captureBtn');
-            btn.classList.remove('recording');
-            
-            const timer = document.getElementById('recTimer');
-            timer.classList.remove('active');
+            document.getElementById('captureBtn').classList.remove('recording');
+            document.getElementById('recTimer').classList.remove('active');
             
             clearInterval(recordingTimer);
             document.getElementById('timerText').textContent = '00:00';
@@ -945,7 +903,7 @@
             try {
                 const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const extension = mediaRecorder.mimeType.includes('mp4') ? 'mp4' : 'webm';
+                const extension = 'webm';
                 const filename = `face-detector-video-${timestamp}.${extension}`;
                 
                 const url = URL.createObjectURL(blob);
@@ -962,7 +920,6 @@
                     showToast('Video saved!');
                 } catch (clickErr) {
                     window.open(url, '_blank');
-                    showToast('Video opened in new tab');
                 }
                 
                 setTimeout(() => {
@@ -972,7 +929,6 @@
                 
             } catch (err) {
                 showToast('Save failed');
-                console.error(err);
             }
         }
 
@@ -989,31 +945,44 @@
                 toast.style.opacity = '0';
                 toast.style.transition = 'opacity 0.3s';
                 setTimeout(() => toast.remove(), 300);
-            }, 2500);
+            }, 2000);
         }
 
-        function getStabilizedAge(currentAge) {
-            if (stableAge !== null && ageConfidenceCount >= AGE_LOCK_THRESHOLD) {
-                if (Math.abs(currentAge - stableAge) > 10) {
-                    ageConfidenceCount = 0;
-                    stableAge = currentAge;
+        function getFaceStabilization(faceId) {
+            if (!faceStabilizations.has(faceId)) {
+                faceStabilizations.set(faceId, {
+                    history: [],
+                    stableAge: null,
+                    stableGender: null,
+                    ageConfidenceCount: 0,
+                    lastUpdate: 0
+                });
+            }
+            return faceStabilizations.get(faceId);
+        }
+
+        function getStabilizedAge(faceData, currentAge) {
+            if (faceData.stableAge !== null && faceData.ageConfidenceCount >= 5) {
+                if (Math.abs(currentAge - faceData.stableAge) > 10) {
+                    faceData.ageConfidenceCount = 0;
+                    faceData.stableAge = currentAge;
                 }
-                return stableAge;
+                return faceData.stableAge;
             }
             
-            faceHistory.push(currentAge);
-            if (faceHistory.length > HISTORY_SIZE) {
-                faceHistory.shift();
+            faceData.history.push(currentAge);
+            if (faceData.history.length > 10) {
+                faceData.history.shift();
             }
             
-            if (faceHistory.length >= 3) {
-                const avg = faceHistory.reduce((a, b) => a + b, 0) / faceHistory.length;
-                const variance = faceHistory.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / faceHistory.length;
+            if (faceData.history.length >= 3) {
+                const avg = faceData.history.reduce((a, b) => a + b, 0) / faceData.history.length;
+                const variance = faceData.history.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / faceData.history.length;
                 
                 if (variance < 10) {
-                    ageConfidenceCount++;
-                    if (ageConfidenceCount >= AGE_LOCK_THRESHOLD) {
-                        stableAge = Math.round(avg);
+                    faceData.ageConfidenceCount++;
+                    if (faceData.ageConfidenceCount >= 5) {
+                        faceData.stableAge = Math.round(avg);
                     }
                     return Math.round(avg);
                 }
@@ -1022,28 +991,25 @@
             return Math.round(currentAge);
         }
 
-        function getStabilizedGender(currentGender, confidence) {
-            if (stableGender !== null && confidence > CONFIDENCE_THRESHOLD) {
-                return stableGender;
+        function getStabilizedGender(faceData, currentGender, confidence) {
+            if (faceData.stableGender !== null && confidence > 0.6) {
+                return faceData.stableGender;
             }
             
-            if (confidence > CONFIDENCE_THRESHOLD) {
-                stableGender = currentGender;
+            if (confidence > 0.6) {
+                faceData.stableGender = currentGender;
             }
             
             return currentGender;
         }
 
         function resetStabilization() {
-            faceHistory = [];
-            stableAge = null;
-            stableGender = null;
-            ageConfidenceCount = 0;
+            faceStabilizations.clear();
         }
 
         function drawLabelText(ctx, text, x, y, options = {}) {
             const padding = 6;
-            const fontSize = options.fontSize || 14;
+            const fontSize = options.fontSize || 13;
             const font = `${options.bold ? 'bold' : 'normal'} ${fontSize}px sans-serif`;
             
             ctx.font = font;
@@ -1051,7 +1017,7 @@
             const textWidth = metrics.width;
             const textHeight = fontSize;
             
-            ctx.fillStyle = options.bgColor || 'rgba(0, 0, 0, 0.8)';
+            ctx.fillStyle = options.bgColor || 'rgba(0, 0, 0, 0.85)';
             ctx.fillRect(x - padding, y - textHeight - padding/2, textWidth + padding*2, textHeight + padding);
             
             if (options.borderColor) {
@@ -1064,108 +1030,202 @@
             ctx.fillText(text, x, y);
         }
 
-        function drawAnalysis(results) {
-            if (!results || results.length === 0) return;
-            
-            const face = results[0];
-            const box = face.detection.box;
-            
-            // Draw rectangle
-            compositeCtx.strokeStyle = '#00ff88';
-            compositeCtx.lineWidth = 3;
-            compositeCtx.strokeRect(box.x, box.y, box.width, box.height);
-            
-            // Stabilize values
-            const stabilizedAge = getStabilizedAge(face.age);
-            const genderConfidence = face.genderConfidence || 0.8;
-            const stabilizedGender = getStabilizedGender(face.gender, genderConfidence);
-            
-            // Get dominant emotion
-            const sorted = Object.entries(face.expressions).sort((a,b) => b[1]-a[1]);
-            const topEmo = sorted[0][0];
-            const emotionEmoji = emotions[topEmo] || '😐';
-            
-            // Draw labels below face
-            const labelY = box.y + box.height + 20;
-            const labelX = box.x;
-            
-            // Age
-            const ageText = `Age: ${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
-            drawLabelText(compositeCtx, ageText, labelX, labelY, {
-                color: '#3b82f6',
-                bgColor: 'rgba(0, 0, 0, 0.85)',
-                borderColor: '#00ff88',
-                bold: true
+        function drawMultipleFaces(results) {
+            const currentFaceIds = new Set(results.map((_, i) => i));
+            for (const [id, data] of faceStabilizations) {
+                if (!currentFaceIds.has(id)) {
+                    faceStabilizations.delete(id);
+                }
+            }
+
+            results.forEach((face, index) => {
+                const box = face.detection.box;
+                
+                const faceId = index;
+                const faceData = getFaceStabilization(faceId);
+                const colors = ['#00ff88', '#3b82f6', '#ec4899', '#fbbf24', '#a855f7'];
+                const boxColor = colors[index % colors.length];
+                
+                // Draw rectangle
+                compositeCtx.strokeStyle = boxColor;
+                compositeCtx.lineWidth = 3;
+                compositeCtx.strokeRect(box.x, box.y, box.width, box.height);
+                
+                // Draw face number
+                compositeCtx.fillStyle = boxColor;
+                compositeCtx.font = 'bold 16px sans-serif';
+                compositeCtx.fillText(`#${index + 1}`, box.x + 5, box.y - 8);
+                
+                // Stabilize values
+                const stabilizedAge = getStabilizedAge(faceData, face.age);
+                const genderConfidence = face.genderConfidence || 0.8;
+                const stabilizedGender = getStabilizedGender(faceData, face.gender, genderConfidence);
+                
+                const sorted = Object.entries(face.expressions).sort((a,b) => b[1]-a[1]);
+                const topEmo = sorted[0][0];
+                const emotionEmoji = emotions[topEmo] || '😐';
+                
+                // Draw labels below face
+                const labelY = box.y + box.height + 20;
+                const labelX = box.x;
+                const lineHeight = 22;
+                
+                // Age with range
+                const ageRange = `${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
+                drawLabelText(compositeCtx, `Age: ${ageRange}`, labelX, labelY, {
+                    color: '#3b82f6',
+                    bgColor: 'rgba(0, 0, 0, 0.85)',
+                    borderColor: boxColor,
+                    bold: true,
+                    fontSize: 12
+                });
+                
+                // Gender
+                const genderText = stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1);
+                const genderColor = stabilizedGender === 'male' ? '#3b82f6' : '#ec4899';
+                drawLabelText(compositeCtx, `Gender: ${genderText}`, labelX, labelY + lineHeight, {
+                    color: genderColor,
+                    bgColor: 'rgba(0, 0, 0, 0.85)',
+                    borderColor: boxColor,
+                    bold: true,
+                    fontSize: 12
+                });
+                
+                // Emotion with emoji
+                const emotionText = `${emotionEmoji} ${topEmo.charAt(0).toUpperCase() + topEmo.slice(1)}`;
+                drawLabelText(compositeCtx, emotionText, labelX, labelY + lineHeight * 2, {
+                    color: '#fbbf24',
+                    bgColor: 'rgba(0, 0, 0, 0.85)',
+                    borderColor: boxColor,
+                    bold: true,
+                    fontSize: 12
+                });
             });
+        }
+
+        function updateBottomPanel(results) {
+            const faceDataContainer = document.getElementById('faceData');
+            const counter = document.getElementById('faceCounter');
             
-            // Gender
-            const genderText = `Gender: ${stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1)}`;
-            const genderColor = stabilizedGender === 'male' ? '#3b82f6' : '#ec4899';
-            drawLabelText(compositeCtx, genderText, labelX, labelY + 25, {
-                color: genderColor,
-                bgColor: 'rgba(0, 0, 0, 0.85)',
-                borderColor: '#00ff88',
-                bold: true
-            });
-            
-            // Emotion
-            const emotionText = `${emotionEmoji} ${topEmo.charAt(0).toUpperCase() + topEmo.slice(1)}`;
-            drawLabelText(compositeCtx, emotionText, labelX, labelY + 50, {
-                color: '#fbbf24',
-                bgColor: 'rgba(0, 0, 0, 0.85)',
-                borderColor: '#00ff88',
-                bold: true
-            });
-            
-            // Update bottom panel
-            const ageRange = `${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
-            const genderTextLabel = stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1);
+            if (results.length === 0) {
+                document.getElementById('noFace').classList.remove('hidden');
+                faceDataContainer.classList.add('hidden');
+                counter.classList.add('hidden');
+                return;
+            }
             
             document.getElementById('noFace').classList.add('hidden');
-            document.getElementById('faceData').classList.remove('hidden');
-            document.getElementById('ageVal').textContent = ageRange;
-            document.getElementById('genderVal').textContent = genderTextLabel;
-            document.getElementById('genderVal').style.color = stabilizedGender === 'male' ? '#3b82f6' : '#ec4899';
-            document.getElementById('emotionVal').textContent = topEmo.charAt(0).toUpperCase() + topEmo.slice(1);
-            document.getElementById('emotionIcon').textContent = emotionEmoji;
+            faceDataContainer.classList.remove('hidden');
+            counter.textContent = `${results.length} Face${results.length > 1 ? 's' : ''}`;
+            counter.classList.remove('hidden');
+            
+            const now = Date.now();
+            if (now - lastUIUpdate < UI_UPDATE_INTERVAL) return;
+            lastUIUpdate = now;
+            
+            let html = '';
+            
+            results.forEach((face, index) => {
+                const faceData = getFaceStabilization(index);
+                const stabilizedAge = getStabilizedAge(faceData, face.age);
+                const genderConfidence = face.genderConfidence || 0.8;
+                const stabilizedGender = getStabilizedGender(faceData, face.gender, genderConfidence);
+                
+                const sorted = Object.entries(face.expressions).sort((a,b) => b[1]-a[1]);
+                const topEmo = sorted[0][0];
+                const emotionEmoji = emotions[topEmo] || '😐';
+                
+                const colors = ['#00ff88', '#3b82f6', '#ec4899', '#fbbf24', '#a855f7'];
+                const accentColor = colors[index % colors.length];
+                
+                const ageRange = `${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
+                const genderText = stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1);
+                
+                html += `
+                    <div class="card" style="border-left: 4px solid ${accentColor}">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div style="background: ${accentColor}; color: #000; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">${index + 1}</div>
+                            <div>
+                                <div class="card-label">Person ${index + 1}</div>
+                                <div style="font-size: 11px; color: #666;">${genderText} • ${ageRange}</div>
+                            </div>
+                        </div>
+                        <div class="card-icon">${emotionEmoji}</div>
+                    </div>
+                `;
+            });
+            
+            faceDataContainer.innerHTML = html;
         }
 
         async function detect() {
             if (!isRunning) return;
 
-            const options = new faceapi.TinyFaceDetectorOptions({ 
-                inputSize: 320, 
-                scoreThreshold: 0.5 
-            });
-            
-            const results = await faceapi.detectAllFaces(video, options)
-                .withFaceExpressions()
-                .withAgeAndGender();
-
-            // Store results for photo capture
-            lastDetectionResults = results;
-
-            // Clear canvas
-            compositeCtx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
-            
-            // Draw video frame
+            // Always draw video frame for smooth display
             compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
             
-            if (results.length > 0) {
-                drawAnalysis(results);
-            } else {
-                resetStabilization();
-                document.getElementById('noFace').classList.remove('hidden');
-                document.getElementById('faceData').classList.add('hidden');
+            // Draw last known results immediately for smoothness
+            if (lastDetectionResults && lastDetectionResults.length > 0) {
+                drawMultipleFaces(lastDetectionResults);
             }
 
-            requestAnimationFrame(detect);
+            // Skip detection on some frames to reduce CPU load
+            frameCount++;
+            if (frameCount % DETECT_EVERY_N_FRAMES !== 0) {
+                animationId = requestAnimationFrame(detect);
+                return;
+            }
+
+            // Prevent overlapping detection calls
+            if (isProcessing) {
+                animationId = requestAnimationFrame(detect);
+                return;
+            }
+
+            isProcessing = true;
+
+            try {
+                // Use smallest input size for fastest detection
+                const options = new faceapi.TinyFaceDetectorOptions({ 
+                    inputSize: 160, // Smallest size for speed
+                    scoreThreshold: 0.5 
+                });
+                
+                const results = await faceapi.detectAllFaces(video, options)
+                    .withFaceExpressions()
+                    .withAgeAndGender();
+
+                // Limit results
+                lastDetectionResults = results.slice(0, MAX_FACES);
+
+                // Update UI
+                if (lastDetectionResults.length > 0) {
+                    updateBottomPanel(lastDetectionResults);
+                } else {
+                    resetStabilization();
+                    updateBottomPanel([]);
+                }
+            } catch (err) {
+                console.error('Detection error:', err);
+            } finally {
+                isProcessing = false;
+            }
+
+            animationId = requestAnimationFrame(detect);
         }
 
         window.addEventListener('resize', () => {
-            if (video.videoWidth) {
+            if (video.videoWidth && isRunning) {
                 compositeCanvas.width = video.videoWidth;
                 compositeCanvas.height = video.videoHeight;
+            }
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (animationId) cancelAnimationFrame(animationId);
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
             }
         });
 
