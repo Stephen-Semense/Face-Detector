@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Face Detector</title>
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        * { 
+            box-sizing: border-box; 
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0a0f;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        #app {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Header - Fixed height */
+        #header {
+            flex-shrink: 0;
+            padding: 8px 12px;
+            padding-top: max(8px, env(safe-area-inset-top));
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            z-index: 100;
+        }
+
+        #header h1 {
+            font-size: clamp(14px, 4vw, 18px);
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .status {
+            font-size: clamp(10px, 3vw, 12px);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .status.offline {
+            background: rgba(255,68,68,0.2);
+            color: #ff4444;
+            border: 1px solid rgba(255,68,68,0.3);
+        }
+
+        .status.active {
+            background: rgba(0,255,136,0.2);
+            color: #00ff88;
+            border: 1px solid rgba(0,255,136,0.3);
+        }
+
+        /* Video Area - Flexible */
+        #videoArea {
+            flex: 1;
+            position: relative;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        #video {
+            position: absolute;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            opacity: 0;
+            z-index: 1;
+        }
+
+        #compositeCanvas {
+            position: absolute;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            z-index: 2;
+        }
+
+        /* Recording Timer */
+        #recTimer {
+            position: absolute;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,0,0,0.8);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 14px;
+            display: none;
+            z-index: 60;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #recTimer.active {
+            display: flex;
+        }
+
+        .rec-dot {
+            width: 10px;
+            height: 10px;
+            background: #fff;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Capture Controls Overlay */
+        #captureControls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 60;
+            align-items: center;
+        }
+
+        .capture-btn {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            border: 4px solid #fff;
+            background: transparent;
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+        }
+
+        .capture-btn:active {
+            transform: scale(0.9);
+        }
+
+        .capture-btn::before {
+            content: '';
+            width: 54px;
+            height: 54px;
+            background: #fff;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+
+        .capture-btn.recording::before {
+            background: #ff4444;
+            border-radius: 4px;
+            width: 30px;
+            height: 30px;
+        }
+
+        .capture-btn.recording {
+            border-color: #ff4444;
+        }
+
+        .photo-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid #00ff88;
+            background: rgba(0, 255, 136, 0.2);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            touch-action: manipulation;
+        }
+
+        .photo-btn:active {
+            transform: scale(0.9);
+            background: rgba(0, 255, 136, 0.4);
+        }
+
+        .photo-btn svg {
+            width: 28px;
+            height: 28px;
+            stroke: #00ff88;
+            fill: none;
+            stroke-width: 2;
+        }
+
+        .switch-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+            background: rgba(0,0,0,0.5);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            touch-action: manipulation;
+        }
+
+        .switch-btn:active {
+            transform: scale(0.9);
+            background: rgba(255,255,255,0.2);
+        }
+
+        .switch-btn svg {
+            width: 24px;
+            height: 24px;
+            stroke: #fff;
+        }
+
+        /* Center Overlay for Start/Loading */
+        #centerOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: rgba(0,0,0,0.85);
+            z-index: 50;
+            gap: 16px;
+        }
+
+        .spinner {
+            width: clamp(32px, 10vw, 48px);
+            height: clamp(32px, 10vw, 48px);
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: #00ff88;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #camBtn {
+            width: min(90%, 280px);
+            padding: clamp(12px, 4vw, 16px) clamp(20px, 6vw, 32px);
+            font-size: clamp(13px, 4vw, 16px);
+            font-weight: 700;
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0,255,136,0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            white-space: nowrap;
+            text-align: center;
+        }
+
+        #camBtn:active {
+            transform: scale(0.95);
+            box-shadow: 0 2px 10px rgba(0,255,136,0.3);
+        }
+
+        .camIcon {
+            width: clamp(20px, 6vw, 24px);
+            height: clamp(20px, 6vw, 24px);
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        .loadingText {
+            font-size: clamp(11px, 3.5vw, 14px);
+            color: #888;
+            text-align: center;
+        }
+
+        .errorMsg {
+            font-size: clamp(11px, 3.5vw, 13px);
+            color: #ff4444;
+            text-align: center;
+            max-width: 260px;
+            line-height: 1.4;
+        }
+
+        /* Results Panel - Bottom */
+        #resultsPanel {
+            flex-shrink: 0;
+            background: rgba(0,0,0,0.9);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 12px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+            max-height: 45vh;
+            overflow-y: auto;
+            z-index: 70;
+        }
+
+        .card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card:last-child {
+            margin-bottom: 0;
+        }
+
+        .card-label {
+            font-size: clamp(10px, 3vw, 11px);
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .card-value {
+            font-size: clamp(14px, 4.5vw, 16px);
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .card-icon {
+            font-size: clamp(18px, 5vw, 22px);
+            flex-shrink: 0;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .grid-2 .card {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+        }
+
+        #noFace {
+            text-align: center;
+            color: #666;
+            font-size: clamp(12px, 4vw, 14px);
+            padding: 20px;
+        }
+
+        .hidden { display: none !important; }
+        
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 2px;
+        }
+
+        @media (max-width: 320px) {
+            #header h1 { font-size: 13px; }
+            .status { padding: 3px 8px; font-size: 10px; }
+            .card { padding: 8px 10px; }
+            .card-label { font-size: 9px; }
+            .card-value { font-size: 13px; }
+            .capture-btn { width: 60px; height: 60px; }
+            .capture-btn::before { width: 44px; height: 44px; }
+            .photo-btn { width: 50px; height: 50px; }
+        }
+
+        @media (orientation: landscape) and (max-height: 500px) {
+            #app { flex-direction: row; }
+            #header {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                background: rgba(0,0,0,0.6);
+            }
+            #resultsPanel {
+                width: 200px;
+                max-height: 100vh;
+                border-top: none;
+                border-left: 1px solid rgba(255,255,255,0.1);
+            }
+            #captureControls {
+                bottom: 10px;
+            }
+        }
+
+        @keyframes flash {
+            0% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        .flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 55;
+        }
+
+        .flash.active {
+            animation: flash 0.3s ease-out;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,255,136,0.95);
+            color: #000;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-weight: 700;
+            font-size: 14px;
+            z-index: 200;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <div id="header">
+            <h1>🔍 FACE DETECTOR</h1>
+            <div id="statusBadge" class="status offline">OFFLINE</div>
+        </div>
+
+        <!-- Video Area -->
+        <div id="videoArea">
+            <video id="video" autoplay muted playsinline></video>
+            <canvas id="compositeCanvas"></canvas>
+            
+            <!-- Flash effect -->
+            <div id="flash" class="flash"></div>
+            
+            <!-- Recording Timer -->
+            <div id="recTimer">
+                <div class="rec-dot"></div>
+                <span id="timerText">00:00</span>
+            </div>
+            
+            <!-- Capture Controls -->
+            <div id="captureControls" class="hidden">
+                <button class="switch-btn" id="switchCamBtn" onclick="switchCamera()" title="Switch Camera">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"></path>
+                        <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="m18 22-3-3 3-3"></path>
+                        <path d="m6 2 3 3-3 3"></path>
+                    </svg>
+                </button>
+                
+                <button class="photo-btn" id="photoBtn" onclick="takePhoto()" title="Take Photo">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                </button>
+                
+                <button class="capture-btn" id="captureBtn" onclick="toggleRecording()" title="Record Video"></button>
+            </div>
+            
+            <!-- Center Overlay -->
+            <div id="centerOverlay">
+                <div id="loadingState">
+                    <div class="spinner"></div>
+                    <div class="loadingText">Loading AI Models...</div>
+                </div>
+                
+                <div id="startState" class="hidden" style="text-align: center; width: 100%;">
+                    <div style="margin-bottom: 20px; opacity: 0.8;">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 0 auto; color: #00ff88;">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                            <circle cx="12" cy="13" r="4"></circle>
+                        </svg>
+                    </div>
+                    <div style="font-size: clamp(16px, 5vw, 20px); font-weight: 700; margin-bottom: 8px;">Camera Access Required</div>
+                    <div style="font-size: clamp(12px, 3.5vw, 14px); color: #888; margin-bottom: 20px; max-width: 260px; margin-left: auto; margin-right: auto;">
+                        Enable your camera to begin real-time face analysis
+                    </div>
+                    <button id="camBtn" onclick="startCamera()">
+                        <svg class="camIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                            <circle cx="12" cy="13" r="4"></circle>
+                        </svg>
+                        Allow Camera
+                    </button>
+                </div>
+
+                <div id="errorState" class="hidden errorMsg"></div>
+            </div>
+        </div>
+
+        <!-- Results Panel -->
+        <div id="resultsPanel">
+            <div id="noFace">No face detected. Point camera at a face.</div>
+            
+            <div id="faceData" class="hidden">
+                <div class="card">
+                    <div>
+                        <div class="card-label">Status</div>
+                        <div class="card-value" style="color: #00ff88;">Detected</div>
+                    </div>
+                    <div class="card-icon">✓</div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-label">Age Range</div>
+                        <div class="card-value" id="ageVal" style="color: #3b82f6;">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Gender</div>
+                        <div class="card-value" id="genderVal" style="color: #a855f7;">--</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div>
+                        <div class="card-label">Emotion</div>
+                        <div class="card-value" id="emotionVal" style="color: #fbbf24;">--</div>
+                    </div>
+                    <div class="card-icon" id="emotionIcon">😐</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model';
+        const emotions = {
+            happy: '😊', sad: '😢', angry: '😠', fearful: '😨',
+            disgusted: '🤢', surprised: '😲', neutral: '😐'
+        };
+
+        let isRunning = false;
+        let video = document.getElementById('video');
+        let compositeCanvas = document.getElementById('compositeCanvas');
+        let compositeCtx = compositeCanvas.getContext('2d');
+        let currentStream = null;
+        let currentFacingMode = 'user';
+        let availableCameras = [];
+        let currentCameraIndex = 0;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+        let recordingStartTime = 0;
+        let recordingTimer = null;
+        
+        // Stabilization variables
+        let faceHistory = [];
+        const HISTORY_SIZE = 10;
+        const CONFIDENCE_THRESHOLD = 0.6;
+        let stableAge = null;
+        let stableGender = null;
+        let ageConfidenceCount = 0;
+        const AGE_LOCK_THRESHOLD = 5;
+
+        // Initialize
+        async function init() {
+            try {
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
+                ]);
+                
+                // Enumerate cameras for better switching
+                await enumerateCameras();
+                
+                document.getElementById('loadingState').classList.add('hidden');
+                document.getElementById('startState').classList.remove('hidden');
+            } catch (e) {
+                showError('Failed to load AI models. Check your connection.');
+            }
+        }
+
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                availableCameras = devices.filter(device => device.kind === 'videoinput');
+                console.log('Available cameras:', availableCameras.map(c => c.label));
+            } catch (e) {
+                console.error('Failed to enumerate cameras:', e);
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('startState').classList.add('hidden');
+            document.getElementById('errorState').textContent = msg;
+            document.getElementById('errorState').classList.remove('hidden');
+        }
+
+        async function startCamera(facingMode = 'user') {
+            try {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+
+                // Try to get specific camera for mobile
+                let constraints = {
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: true
+                };
+
+                // If we have multiple cameras, try to select by facing mode
+                if (availableCameras.length > 1) {
+                    // Find camera with matching label or use facingMode
+                    const envCamera = availableCameras.find(c => 
+                        c.label.toLowerCase().includes('back') || 
+                        c.label.toLowerCase().includes('rear') ||
+                        c.label.toLowerCase().includes('environment')
+                    );
+                    const userCamera = availableCameras.find(c => 
+                        c.label.toLowerCase().includes('front') || 
+                        c.label.toLowerCase().includes('user') ||
+                        c.label.toLowerCase().includes('selfie')
+                    );
+
+                    if (facingMode === 'environment' && envCamera) {
+                        constraints.video.deviceId = { exact: envCamera.deviceId };
+                    } else if (facingMode === 'user' && userCamera) {
+                        constraints.video.deviceId = { exact: userCamera.deviceId };
+                    } else {
+                        constraints.video.facingMode = facingMode;
+                    }
+                } else {
+                    constraints.video.facingMode = facingMode;
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                currentStream = stream;
+                currentFacingMode = facingMode;
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    
+                    compositeCanvas.width = video.videoWidth;
+                    compositeCanvas.height = video.videoHeight;
+                    
+                    document.getElementById('centerOverlay').classList.add('hidden');
+                    document.getElementById('captureControls').classList.remove('hidden');
+                    document.getElementById('statusBadge').textContent = 'ACTIVE';
+                    document.getElementById('statusBadge').classList.remove('offline');
+                    document.getElementById('statusBadge').classList.add('active');
+                    
+                    isRunning = true;
+                    detect();
+                };
+            } catch (e) {
+                console.error('Camera error:', e);
+                // Fallback to simple constraints
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: true, 
+                        audio: true 
+                    });
+                    currentStream = stream;
+                    video.srcObject = stream;
+                    
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        compositeCanvas.width = video.videoWidth;
+                        compositeCanvas.height = video.videoHeight;
+                        document.getElementById('centerOverlay').classList.add('hidden');
+                        document.getElementById('captureControls').classList.remove('hidden');
+                        document.getElementById('statusBadge').textContent = 'ACTIVE';
+                        document.getElementById('statusBadge').classList.remove('offline');
+                        document.getElementById('statusBadge').classList.add('active');
+                        isRunning = true;
+                        detect();
+                    };
+                } catch (fallbackErr) {
+                    showError('Camera access denied. Please allow camera access and reload.');
+                }
+            }
+        }
+
+        async function switchCamera() {
+            // Toggle between available cameras
+            if (availableCameras.length <= 1) {
+                // Simple toggle if we can't enumerate
+                const newMode = currentFacingMode === 'user' ? 'environment' : 'user';
+                await startCamera(newMode);
+            } else {
+                // Cycle through available cameras
+                currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
+                const nextCamera = availableCameras[currentCameraIndex];
+                
+                try {
+                    if (currentStream) {
+                        currentStream.getTracks().forEach(track => track.stop());
+                    }
+
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { deviceId: { exact: nextCamera.deviceId } },
+                        audio: true
+                    });
+
+                    currentStream = stream;
+                    video.srcObject = stream;
+                    
+                    // Update facing mode based on camera label
+                    if (nextCamera.label.toLowerCase().includes('back') || 
+                        nextCamera.label.toLowerCase().includes('rear')) {
+                        currentFacingMode = 'environment';
+                    } else {
+                        currentFacingMode = 'user';
+                    }
+
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        compositeCanvas.width = video.videoWidth;
+                        compositeCanvas.height = video.videoHeight;
+                    };
+                } catch (e) {
+                    console.error('Switch failed:', e);
+                    showToast('Failed to switch camera');
+                }
+            }
+        }
+
+        function takePhoto() {
+            const flash = document.getElementById('flash');
+            flash.classList.add('active');
+            setTimeout(() => flash.classList.remove('active'), 300);
+
+            // The composite canvas already has everything drawn on it
+            // Just need to save it
+            saveCanvasImage();
+        }
+
+        function saveCanvasImage() {
+            try {
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const filename = `face-detector-photo-${timestamp}.jpg`;
+
+                // Ensure we draw the latest frame before saving
+                drawFrameToCanvas();
+
+                compositeCanvas.toBlob((blob) => {
+                    if (!blob) {
+                        showToast('Failed to create image');
+                        return;
+                    }
+                    
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    
+                    document.body.appendChild(a);
+                    
+                    try {
+                        a.click();
+                        showToast('Photo saved to Downloads!');
+                    } catch (clickErr) {
+                        window.open(url, '_blank');
+                        showToast('Image opened - tap and hold to save');
+                    }
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 1000);
+                    
+                }, 'image/jpeg', 0.95);
+                
+            } catch (err) {
+                console.error('Save error:', err);
+                showToast('Save failed. Try again.');
+            }
+        }
+
+        function drawFrameToCanvas() {
+            // Draw video frame
+            compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            
+            // Redraw detection if we have current data
+            if (lastDetectionResults && lastDetectionResults.length > 0) {
+                drawAnalysis(lastDetectionResults);
+            }
+        }
+
+        let lastDetectionResults = null;
+
+        function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startVideoRecording();
+            }
+        }
+
+        function startVideoRecording() {
+            if (!currentStream) return;
+            
+            const canvasStream = compositeCanvas.captureStream(30);
+            
+            const audioTrack = currentStream.getAudioTracks()[0];
+            if (audioTrack) {
+                canvasStream.addTrack(audioTrack);
+            }
+            
+            recordedChunks = [];
+            const mimeTypes = [
+                'video/webm;codecs=vp9,opus',
+                'video/webm;codecs=vp8,opus',
+                'video/webm',
+                'video/mp4'
+            ];
+            
+            let selectedMimeType = '';
+            for (const type of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    selectedMimeType = type;
+                    break;
+                }
+            }
+            
+            if (!selectedMimeType) {
+                showToast('Video recording not supported');
+                return;
+            }
+            
+            try {
+                mediaRecorder = new MediaRecorder(canvasStream, {
+                    mimeType: selectedMimeType,
+                    videoBitsPerSecond: 2500000
+                });
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    saveVideo();
+                };
+                
+                mediaRecorder.start(1000);
+                isRecording = true;
+                recordingStartTime = Date.now();
+                
+                const btn = document.getElementById('captureBtn');
+                btn.classList.add('recording');
+                
+                const timer = document.getElementById('recTimer');
+                timer.classList.add('active');
+                
+                updateRecordingTimer();
+                recordingTimer = setInterval(updateRecordingTimer, 1000);
+                
+                showToast('Recording... Tap to stop');
+            } catch (e) {
+                showToast('Failed to start recording');
+                console.error(e);
+            }
+        }
+
+        function stopRecording() {
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+            
+            mediaRecorder.stop();
+            isRecording = false;
+            
+            const btn = document.getElementById('captureBtn');
+            btn.classList.remove('recording');
+            
+            const timer = document.getElementById('recTimer');
+            timer.classList.remove('active');
+            
+            clearInterval(recordingTimer);
+            document.getElementById('timerText').textContent = '00:00';
+        }
+
+        function updateRecordingTimer() {
+            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const seconds = (elapsed % 60).toString().padStart(2, '0');
+            document.getElementById('timerText').textContent = `${minutes}:${seconds}`;
+            
+            if (elapsed >= 300) {
+                stopRecording();
+                showToast('Recording stopped (5 min limit)');
+            }
+        }
+
+        function saveVideo() {
+            try {
+                const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const extension = mediaRecorder.mimeType.includes('mp4') ? 'mp4' : 'webm';
+                const filename = `face-detector-video-${timestamp}.${extension}`;
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                
+                document.body.appendChild(a);
+                
+                try {
+                    a.click();
+                    showToast('Video saved!');
+                } catch (clickErr) {
+                    window.open(url, '_blank');
+                    showToast('Video opened in new tab');
+                }
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 1000);
+                
+            } catch (err) {
+                showToast('Save failed');
+                console.error(err);
+            }
+        }
+
+        function showToast(message) {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 2500);
+        }
+
+        function getStabilizedAge(currentAge) {
+            if (stableAge !== null && ageConfidenceCount >= AGE_LOCK_THRESHOLD) {
+                if (Math.abs(currentAge - stableAge) > 10) {
+                    ageConfidenceCount = 0;
+                    stableAge = currentAge;
+                }
+                return stableAge;
+            }
+            
+            faceHistory.push(currentAge);
+            if (faceHistory.length > HISTORY_SIZE) {
+                faceHistory.shift();
+            }
+            
+            if (faceHistory.length >= 3) {
+                const avg = faceHistory.reduce((a, b) => a + b, 0) / faceHistory.length;
+                const variance = faceHistory.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / faceHistory.length;
+                
+                if (variance < 10) {
+                    ageConfidenceCount++;
+                    if (ageConfidenceCount >= AGE_LOCK_THRESHOLD) {
+                        stableAge = Math.round(avg);
+                    }
+                    return Math.round(avg);
+                }
+            }
+            
+            return Math.round(currentAge);
+        }
+
+        function getStabilizedGender(currentGender, confidence) {
+            if (stableGender !== null && confidence > CONFIDENCE_THRESHOLD) {
+                return stableGender;
+            }
+            
+            if (confidence > CONFIDENCE_THRESHOLD) {
+                stableGender = currentGender;
+            }
+            
+            return currentGender;
+        }
+
+        function resetStabilization() {
+            faceHistory = [];
+            stableAge = null;
+            stableGender = null;
+            ageConfidenceCount = 0;
+        }
+
+        function drawLabelText(ctx, text, x, y, options = {}) {
+            const padding = 6;
+            const fontSize = options.fontSize || 14;
+            const font = `${options.bold ? 'bold' : 'normal'} ${fontSize}px sans-serif`;
+            
+            ctx.font = font;
+            const metrics = ctx.measureText(text);
+            const textWidth = metrics.width;
+            const textHeight = fontSize;
+            
+            ctx.fillStyle = options.bgColor || 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(x - padding, y - textHeight - padding/2, textWidth + padding*2, textHeight + padding);
+            
+            if (options.borderColor) {
+                ctx.strokeStyle = options.borderColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x - padding, y - textHeight - padding/2, textWidth + padding*2, textHeight + padding);
+            }
+            
+            ctx.fillStyle = options.color || '#fff';
+            ctx.fillText(text, x, y);
+        }
+
+        function drawAnalysis(results) {
+            if (!results || results.length === 0) return;
+            
+            const face = results[0];
+            const box = face.detection.box;
+            
+            // Draw rectangle
+            compositeCtx.strokeStyle = '#00ff88';
+            compositeCtx.lineWidth = 3;
+            compositeCtx.strokeRect(box.x, box.y, box.width, box.height);
+            
+            // Stabilize values
+            const stabilizedAge = getStabilizedAge(face.age);
+            const genderConfidence = face.genderConfidence || 0.8;
+            const stabilizedGender = getStabilizedGender(face.gender, genderConfidence);
+            
+            // Get dominant emotion
+            const sorted = Object.entries(face.expressions).sort((a,b) => b[1]-a[1]);
+            const topEmo = sorted[0][0];
+            const emotionEmoji = emotions[topEmo] || '😐';
+            
+            // Draw labels below face
+            const labelY = box.y + box.height + 20;
+            const labelX = box.x;
+            
+            // Age
+            const ageText = `Age: ${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
+            drawLabelText(compositeCtx, ageText, labelX, labelY, {
+                color: '#3b82f6',
+                bgColor: 'rgba(0, 0, 0, 0.85)',
+                borderColor: '#00ff88',
+                bold: true
+            });
+            
+            // Gender
+            const genderText = `Gender: ${stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1)}`;
+            const genderColor = stabilizedGender === 'male' ? '#3b82f6' : '#ec4899';
+            drawLabelText(compositeCtx, genderText, labelX, labelY + 25, {
+                color: genderColor,
+                bgColor: 'rgba(0, 0, 0, 0.85)',
+                borderColor: '#00ff88',
+                bold: true
+            });
+            
+            // Emotion
+            const emotionText = `${emotionEmoji} ${topEmo.charAt(0).toUpperCase() + topEmo.slice(1)}`;
+            drawLabelText(compositeCtx, emotionText, labelX, labelY + 50, {
+                color: '#fbbf24',
+                bgColor: 'rgba(0, 0, 0, 0.85)',
+                borderColor: '#00ff88',
+                bold: true
+            });
+            
+            // Update bottom panel
+            const ageRange = `${Math.max(0, stabilizedAge - 2)}-${stabilizedAge + 2}`;
+            const genderTextLabel = stabilizedGender.charAt(0).toUpperCase() + stabilizedGender.slice(1);
+            
+            document.getElementById('noFace').classList.add('hidden');
+            document.getElementById('faceData').classList.remove('hidden');
+            document.getElementById('ageVal').textContent = ageRange;
+            document.getElementById('genderVal').textContent = genderTextLabel;
+            document.getElementById('genderVal').style.color = stabilizedGender === 'male' ? '#3b82f6' : '#ec4899';
+            document.getElementById('emotionVal').textContent = topEmo.charAt(0).toUpperCase() + topEmo.slice(1);
+            document.getElementById('emotionIcon').textContent = emotionEmoji;
+        }
+
+        async function detect() {
+            if (!isRunning) return;
+
+            const options = new faceapi.TinyFaceDetectorOptions({ 
+                inputSize: 320, 
+                scoreThreshold: 0.5 
+            });
+            
+            const results = await faceapi.detectAllFaces(video, options)
+                .withFaceExpressions()
+                .withAgeAndGender();
+
+            // Store results for photo capture
+            lastDetectionResults = results;
+
+            // Clear canvas
+            compositeCtx.clearRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+            
+            // Draw video frame
+            compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            
+            if (results.length > 0) {
+                drawAnalysis(results);
+            } else {
+                resetStabilization();
+                document.getElementById('noFace').classList.remove('hidden');
+                document.getElementById('faceData').classList.add('hidden');
+            }
+
+            requestAnimationFrame(detect);
+        }
+
+        window.addEventListener('resize', () => {
+            if (video.videoWidth) {
+                compositeCanvas.width = video.videoWidth;
+                compositeCanvas.height = video.videoHeight;
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>
