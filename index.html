@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Face Detector</title>
+    <title>Face Detector - Long Range</title>
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
         * { 
@@ -20,6 +20,7 @@
             background: #0a0a0f;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            touch-action: none; /* Prevent default browser zoom */
         }
 
         #app {
@@ -69,7 +70,7 @@
             border: 1px solid rgba(0,255,136,0.3);
         }
 
-        /* Video Area - Flexible */
+        /* Video Area - Flexible with zoom container */
         #videoArea {
             flex: 1;
             position: relative;
@@ -79,6 +80,18 @@
             justify-content: center;
             overflow: hidden;
             min-height: 0;
+            touch-action: none; /* Enable custom touch handling */
+        }
+
+        #zoomContainer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-origin: center center;
+            will-change: transform; /* Optimize for animations */
         }
 
         #video {
@@ -90,6 +103,7 @@
             object-fit: contain;
             opacity: 0;
             z-index: 1;
+            pointer-events: none; /* Let touches pass through to container */
         }
 
         #compositeCanvas {
@@ -100,6 +114,56 @@
             height: auto;
             object-fit: contain;
             z-index: 2;
+            pointer-events: none; /* Let touches pass through */
+        }
+
+        /* Zoom Controls */
+        .zoom-controls {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 70;
+        }
+
+        .zoom-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            user-select: none;
+        }
+
+        .zoom-btn:active {
+            transform: scale(0.9);
+            background: rgba(255,255,255,0.2);
+        }
+
+        .zoom-level {
+            position: absolute;
+            right: 20px;
+            top: 140px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 70;
+            backdrop-filter: blur(4px);
         }
 
         /* Recording Timer */
@@ -360,18 +424,6 @@
             flex-shrink: 0;
         }
 
-        .grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-
-        .grid-2 .card {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 4px;
-        }
-
         #noFace {
             text-align: center;
             color: #666;
@@ -401,6 +453,7 @@
             .capture-btn { width: 60px; height: 60px; }
             .capture-btn::before { width: 44px; height: 44px; }
             .photo-btn { width: 50px; height: 50px; }
+            .zoom-btn { width: 36px; height: 36px; font-size: 16px; }
         }
 
         @media (orientation: landscape) and (max-height: 500px) {
@@ -420,6 +473,9 @@
             }
             #captureControls {
                 bottom: 10px;
+            }
+            .zoom-controls {
+                right: 10px;
             }
         }
 
@@ -473,6 +529,42 @@
             font-size: 14px;
             z-index: 60;
         }
+
+        /* Detection range indicator */
+        .range-indicator {
+            position: absolute;
+            top: 130px;
+            right: 20px;
+            background: rgba(0,0,0,0.6);
+            color: #00ff88;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 11px;
+            font-weight: 600;
+            z-index: 60;
+            backdrop-filter: blur(4px);
+        }
+
+        /* Touch hint */
+        .touch-hint {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 65;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        .touch-hint.show {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -485,8 +577,23 @@
 
         <!-- Video Area -->
         <div id="videoArea">
-            <video id="video" autoplay muted playsinline></video>
-            <canvas id="compositeCanvas"></canvas>
+            <div id="zoomContainer">
+                <video id="video" autoplay muted playsinline></video>
+                <canvas id="compositeCanvas"></canvas>
+            </div>
+            
+            <!-- Touch hint -->
+            <div class="touch-hint" id="touchHint">Pinch with two fingers to zoom</div>
+            
+            <!-- Zoom Controls -->
+            <div class="zoom-controls">
+                <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+            </div>
+            <div class="zoom-level" id="zoomLevel">1.0x</div>
+            
+            <!-- Range Indicator -->
+            <div class="range-indicator" id="rangeIndicator">Long Range Mode</div>
             
             <!-- Face Counter -->
             <div id="faceCounter" class="face-counter hidden">0 Faces</div>
@@ -539,7 +646,7 @@
                     </div>
                     <div style="font-size: clamp(16px, 5vw, 20px); font-weight: 700; margin-bottom: 8px;">Camera Access Required</div>
                     <div style="font-size: clamp(12px, 3.5vw, 14px); color: #888; margin-bottom: 20px; max-width: 260px; margin-left: auto; margin-right: auto;">
-                        Enable your camera to begin real-time face analysis
+                        Pinch with two fingers to zoom on far faces
                     </div>
                     <button id="camBtn" onclick="startCamera()">
                         <svg class="camIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -556,7 +663,7 @@
 
         <!-- Results Panel -->
         <div id="resultsPanel">
-            <div id="noFace">No face detected. Point camera at faces.</div>
+            <div id="noFace">No face detected. Pinch to zoom on far faces or move closer.</div>
             <div id="faceData" class="hidden"></div>
         </div>
     </div>
@@ -570,6 +677,7 @@
 
         let isRunning = false;
         let video = document.getElementById('video');
+        let zoomContainer = document.getElementById('zoomContainer');
         let compositeCanvas = document.getElementById('compositeCanvas');
         let compositeCtx = compositeCanvas.getContext('2d');
         let currentStream = null;
@@ -582,17 +690,26 @@
         let recordingStartTime = 0;
         let recordingTimer = null;
         
-        // Performance settings - optimized for speed
-        const MAX_FACES = 4;
+        // Zoom settings
+        let currentZoom = 1.0;
+        const MIN_ZOOM = 1.0;
+        const MAX_ZOOM = 8.0; // Increased max zoom
+        const ZOOM_STEP = 0.5;
+        
+        // Performance settings
+        const MAX_FACES = 5;
         let faceStabilizations = new Map();
         let frameCount = 0;
-        const DETECT_EVERY_N_FRAMES = 3; // Detect every 3rd frame for better performance
+        const DETECT_EVERY_N_FRAMES = 2;
         let lastUIUpdate = 0;
-        const UI_UPDATE_INTERVAL = 300; // Update UI every 300ms
-        
-        // Use requestAnimationFrame for smooth rendering
+        const UI_UPDATE_INTERVAL = 250;
         let animationId = null;
         let isProcessing = false;
+
+        // Touch handling for pinch zoom
+        let touches = new Map();
+        let lastPinchDistance = 0;
+        let isPinching = false;
 
         // Initialize
         async function init() {
@@ -607,6 +724,14 @@
                 
                 document.getElementById('loadingState').classList.add('hidden');
                 document.getElementById('startState').classList.remove('hidden');
+                
+                // Show touch hint briefly
+                setTimeout(() => {
+                    document.getElementById('touchHint').classList.add('show');
+                    setTimeout(() => {
+                        document.getElementById('touchHint').classList.remove('show');
+                    }, 3000);
+                }, 1000);
             } catch (e) {
                 showError('Failed to load AI models. Check your connection.');
             }
@@ -628,6 +753,109 @@
             document.getElementById('errorState').classList.remove('hidden');
         }
 
+        // Zoom functions
+        function zoomIn() {
+            if (currentZoom < MAX_ZOOM) {
+                currentZoom = Math.min(currentZoom + ZOOM_STEP, MAX_ZOOM);
+                applyZoom();
+            }
+        }
+
+        function zoomOut() {
+            if (currentZoom > MIN_ZOOM) {
+                currentZoom = Math.max(currentZoom - ZOOM_STEP, MIN_ZOOM);
+                applyZoom();
+            }
+        }
+
+        function applyZoom() {
+            zoomContainer.style.transform = `scale(${currentZoom})`;
+            document.getElementById('zoomLevel').textContent = currentZoom.toFixed(1) + 'x';
+        }
+
+        // Enhanced pinch zoom handling
+        function setupPinchZoom() {
+            const videoArea = document.getElementById('videoArea');
+            
+            videoArea.addEventListener('touchstart', handleTouchStart, { passive: false });
+            videoArea.addEventListener('touchmove', handleTouchMove, { passive: false });
+            videoArea.addEventListener('touchend', handleTouchEnd, { passive: false });
+            videoArea.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+        }
+
+        function handleTouchStart(e) {
+            // Store all touches
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                touches.set(touch.identifier, {
+                    x: touch.clientX,
+                    y: touch.clientY
+                });
+            }
+            
+            // Check if we have exactly 2 touches (pinch)
+            if (touches.size === 2) {
+                isPinching = true;
+                const touchArray = Array.from(touches.values());
+                lastPinchDistance = getDistance(touchArray[0], touchArray[1]);
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (!isPinching || touches.size !== 2) return;
+            
+            e.preventDefault(); // Prevent scrolling while pinching
+            
+            // Update touch positions
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touches.has(touch.identifier)) {
+                    touches.set(touch.identifier, {
+                        x: touch.clientX,
+                        y: touch.clientY
+                    });
+                }
+            }
+            
+            // Calculate new distance
+            const touchArray = Array.from(touches.values());
+            const newDistance = getDistance(touchArray[0], touchArray[1]);
+            
+            // Calculate zoom change
+            const scaleChange = newDistance / lastPinchDistance;
+            let newZoom = currentZoom * scaleChange;
+            
+            // Clamp zoom
+            newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+            
+            // Apply zoom
+            currentZoom = newZoom;
+            applyZoom();
+            
+            // Update last distance
+            lastPinchDistance = newDistance;
+        }
+
+        function handleTouchEnd(e) {
+            // Remove ended touches
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                touches.delete(touch.identifier);
+            }
+            
+            // Reset pinch state if less than 2 touches
+            if (touches.size < 2) {
+                isPinching = false;
+                lastPinchDistance = 0;
+            }
+        }
+
+        function getDistance(touch1, touch2) {
+            const dx = touch2.x - touch1.x;
+            const dy = touch2.y - touch1.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
         async function startCamera(facingMode = 'user') {
             try {
                 if (currentStream) {
@@ -636,8 +864,9 @@
 
                 let constraints = {
                     video: {
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
+                        width: { ideal: 1920 }, // Full HD for best far detection
+                        height: { ideal: 1080 },
+                        facingMode: facingMode
                     },
                     audio: true
                 };
@@ -645,22 +874,13 @@
                 if (availableCameras.length > 1) {
                     const envCamera = availableCameras.find(c => 
                         c.label.toLowerCase().includes('back') || 
-                        c.label.toLowerCase().includes('rear')
+                        c.label.toLowerCase().includes('rear') ||
+                        c.label.toLowerCase().includes('telephoto') // Prefer telephoto for far
                     );
-                    const userCamera = availableCameras.find(c => 
-                        c.label.toLowerCase().includes('front') || 
-                        c.label.toLowerCase().includes('user')
-                    );
-
+                    
                     if (facingMode === 'environment' && envCamera) {
                         constraints.video.deviceId = { exact: envCamera.deviceId };
-                    } else if (facingMode === 'user' && userCamera) {
-                        constraints.video.deviceId = { exact: userCamera.deviceId };
-                    } else {
-                        constraints.video.facingMode = facingMode;
                     }
-                } else {
-                    constraints.video.facingMode = facingMode;
                 }
 
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -672,7 +892,6 @@
                 video.onloadedmetadata = () => {
                     video.play();
                     
-                    // Set canvas to video native resolution for quality
                     compositeCanvas.width = video.videoWidth;
                     compositeCanvas.height = video.videoHeight;
                     
@@ -682,14 +901,18 @@
                     document.getElementById('statusBadge').classList.remove('offline');
                     document.getElementById('statusBadge').classList.add('active');
                     
+                    // Setup pinch zoom after camera starts
+                    setupPinchZoom();
+                    
                     isRunning = true;
                     detect();
                 };
             } catch (e) {
                 console.error('Camera error:', e);
+                // Fallback to lower resolution
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: true, 
+                        video: { facingMode: facingMode }, 
                         audio: true 
                     });
                     currentStream = stream;
@@ -704,6 +927,7 @@
                         document.getElementById('statusBadge').textContent = 'ACTIVE';
                         document.getElementById('statusBadge').classList.remove('offline');
                         document.getElementById('statusBadge').classList.add('active');
+                        setupPinchZoom();
                         isRunning = true;
                         detect();
                     };
@@ -727,7 +951,11 @@
                     }
 
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { deviceId: { exact: nextCamera.deviceId } },
+                        video: { 
+                            deviceId: { exact: nextCamera.deviceId },
+                            width: { ideal: 1920 },
+                            height: { ideal: 1080 }
+                        },
                         audio: true
                     });
 
@@ -738,6 +966,7 @@
                         video.play();
                         compositeCanvas.width = video.videoWidth;
                         compositeCanvas.height = video.videoHeight;
+                        setupPinchZoom();
                     };
                 } catch (e) {
                     showToast('Failed to switch camera');
@@ -755,7 +984,12 @@
         }
 
         function drawFrameToCanvas() {
-            compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
+            compositeCtx.save();
+            compositeCtx.scale(currentZoom, currentZoom);
+            const offsetX = (compositeCanvas.width - compositeCanvas.width / currentZoom) / 2;
+            const offsetY = (compositeCanvas.height - compositeCanvas.height / currentZoom) / 2;
+            compositeCtx.drawImage(video, -offsetX, -offsetY, compositeCanvas.width / currentZoom, compositeCanvas.height / currentZoom);
+            compositeCtx.restore();
             
             if (lastDetectionResults && lastDetectionResults.length > 0) {
                 drawMultipleFaces(lastDetectionResults);
@@ -814,7 +1048,6 @@
         function startVideoRecording() {
             if (!currentStream) return;
             
-            // Use 24 FPS for smooth video while recording
             const canvasStream = compositeCanvas.captureStream(24);
             
             const audioTrack = currentStream.getAudioTracks()[0];
@@ -845,7 +1078,7 @@
             try {
                 mediaRecorder = new MediaRecorder(canvasStream, {
                     mimeType: selectedMimeType,
-                    videoBitsPerSecond: 2000000 // 2 Mbps for good quality
+                    videoBitsPerSecond: 2500000
                 });
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -1048,12 +1281,12 @@
                 
                 // Draw rectangle
                 compositeCtx.strokeStyle = boxColor;
-                compositeCtx.lineWidth = 3;
+                compositeCtx.lineWidth = Math.max(2, 3 / currentZoom);
                 compositeCtx.strokeRect(box.x, box.y, box.width, box.height);
                 
                 // Draw face number
                 compositeCtx.fillStyle = boxColor;
-                compositeCtx.font = 'bold 16px sans-serif';
+                compositeCtx.font = `bold ${Math.max(12, 16 / currentZoom)}px sans-serif`;
                 compositeCtx.fillText(`#${index + 1}`, box.x + 5, box.y - 8);
                 
                 // Stabilize values
@@ -1077,7 +1310,7 @@
                     bgColor: 'rgba(0, 0, 0, 0.85)',
                     borderColor: boxColor,
                     bold: true,
-                    fontSize: 12
+                    fontSize: Math.max(10, 12 / currentZoom)
                 });
                 
                 // Gender
@@ -1088,7 +1321,7 @@
                     bgColor: 'rgba(0, 0, 0, 0.85)',
                     borderColor: boxColor,
                     bold: true,
-                    fontSize: 12
+                    fontSize: Math.max(10, 12 / currentZoom)
                 });
                 
                 // Emotion with emoji
@@ -1098,7 +1331,7 @@
                     bgColor: 'rgba(0, 0, 0, 0.85)',
                     borderColor: boxColor,
                     bold: true,
-                    fontSize: 12
+                    fontSize: Math.max(10, 12 / currentZoom)
                 });
             });
         }
@@ -1185,20 +1418,18 @@
             isProcessing = true;
 
             try {
-                // Use smallest input size for fastest detection
+                // Use 416 for best far detection
                 const options = new faceapi.TinyFaceDetectorOptions({ 
-                    inputSize: 160, // Smallest size for speed
-                    scoreThreshold: 0.5 
+                    inputSize: 416,
+                    scoreThreshold: 0.3
                 });
                 
                 const results = await faceapi.detectAllFaces(video, options)
                     .withFaceExpressions()
                     .withAgeAndGender();
 
-                // Limit results
                 lastDetectionResults = results.slice(0, MAX_FACES);
 
-                // Update UI
                 if (lastDetectionResults.length > 0) {
                     updateBottomPanel(lastDetectionResults);
                 } else {
@@ -1221,7 +1452,6 @@
             }
         });
 
-        // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             if (animationId) cancelAnimationFrame(animationId);
             if (currentStream) {
