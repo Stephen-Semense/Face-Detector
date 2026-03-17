@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Face Detector - Long Range</title>
+    <title>Face Detector - HD Enhanced</title>
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
         * { 
@@ -20,7 +20,7 @@
             background: #0a0a0f;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            touch-action: none; /* Prevent default browser zoom */
+            touch-action: none;
         }
 
         #app {
@@ -80,7 +80,7 @@
             justify-content: center;
             overflow: hidden;
             min-height: 0;
-            touch-action: none; /* Enable custom touch handling */
+            touch-action: none;
         }
 
         #zoomContainer {
@@ -91,7 +91,7 @@
             align-items: center;
             justify-content: center;
             transform-origin: center center;
-            will-change: transform; /* Optimize for animations */
+            will-change: transform;
         }
 
         #video {
@@ -103,7 +103,10 @@
             object-fit: contain;
             opacity: 0;
             z-index: 1;
-            pointer-events: none; /* Let touches pass through to container */
+            pointer-events: none;
+            /* Enhance video rendering */
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
         }
 
         #compositeCanvas {
@@ -114,7 +117,9 @@
             height: auto;
             object-fit: contain;
             z-index: 2;
-            pointer-events: none; /* Let touches pass through */
+            pointer-events: none;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
         }
 
         /* Zoom Controls */
@@ -530,13 +535,13 @@
             z-index: 60;
         }
 
-        /* Detection range indicator */
-        .range-indicator {
+        /* Quality indicator */
+        .quality-indicator {
             position: absolute;
             top: 130px;
             right: 20px;
-            background: rgba(0,0,0,0.6);
-            color: #00ff88;
+            background: rgba(0,255,136,0.8);
+            color: #000;
             padding: 6px 12px;
             border-radius: 15px;
             font-size: 11px;
@@ -565,13 +570,39 @@
         .touch-hint.show {
             opacity: 1;
         }
+
+        /* Focus indicator */
+        .focus-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            border: 2px solid rgba(255,255,255,0.5);
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 45;
+        }
+
+        .focus-indicator.active {
+            opacity: 1;
+            animation: focusPulse 1s ease-in-out;
+        }
+
+        @keyframes focusPulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(0.9); }
+        }
     </style>
 </head>
 <body>
     <div id="app">
         <!-- Header -->
         <div id="header">
-            <h1>🔍 FACE DETECTOR</h1>
+            <h1>🔍 FACE DETECTOR HD</h1>
             <div id="statusBadge" class="status offline">OFFLINE</div>
         </div>
 
@@ -581,6 +612,9 @@
                 <video id="video" autoplay muted playsinline></video>
                 <canvas id="compositeCanvas"></canvas>
             </div>
+            
+            <!-- Focus Indicator -->
+            <div class="focus-indicator" id="focusIndicator"></div>
             
             <!-- Touch hint -->
             <div class="touch-hint" id="touchHint">Pinch with two fingers to zoom</div>
@@ -592,8 +626,8 @@
             </div>
             <div class="zoom-level" id="zoomLevel">1.0x</div>
             
-            <!-- Range Indicator -->
-            <div class="range-indicator" id="rangeIndicator">Long Range Mode</div>
+            <!-- Quality Indicator -->
+            <div class="quality-indicator" id="qualityIndicator">HD Quality</div>
             
             <!-- Face Counter -->
             <div id="faceCounter" class="face-counter hidden">0 Faces</div>
@@ -646,7 +680,7 @@
                     </div>
                     <div style="font-size: clamp(16px, 5vw, 20px); font-weight: 700; margin-bottom: 8px;">Camera Access Required</div>
                     <div style="font-size: clamp(12px, 3.5vw, 14px); color: #888; margin-bottom: 20px; max-width: 260px; margin-left: auto; margin-right: auto;">
-                        Pinch with two fingers to zoom on far faces
+                        HD quality with autofocus enabled. Pinch to zoom on far faces.
                     </div>
                     <button id="camBtn" onclick="startCamera()">
                         <svg class="camIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -663,7 +697,7 @@
 
         <!-- Results Panel -->
         <div id="resultsPanel">
-            <div id="noFace">No face detected. Pinch to zoom on far faces or move closer.</div>
+            <div id="noFace">No face detected. Pinch to zoom on far faces or tap to focus.</div>
             <div id="faceData" class="hidden"></div>
         </div>
     </div>
@@ -679,7 +713,7 @@
         let video = document.getElementById('video');
         let zoomContainer = document.getElementById('zoomContainer');
         let compositeCanvas = document.getElementById('compositeCanvas');
-        let compositeCtx = compositeCanvas.getContext('2d');
+        let compositeCtx = compositeCanvas.getContext('2d', { alpha: false }); // Optimize for no transparency
         let currentStream = null;
         let currentFacingMode = 'user';
         let availableCameras = [];
@@ -689,11 +723,12 @@
         let isRecording = false;
         let recordingStartTime = 0;
         let recordingTimer = null;
+        let videoTrack = null; // Store video track for focus control
         
         // Zoom settings
         let currentZoom = 1.0;
         const MIN_ZOOM = 1.0;
-        const MAX_ZOOM = 8.0; // Increased max zoom
+        const MAX_ZOOM = 10.0; // Increased max zoom
         const ZOOM_STEP = 0.5;
         
         // Performance settings
@@ -741,6 +776,7 @@
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 availableCameras = devices.filter(device => device.kind === 'videoinput');
+                console.log('Available cameras:', availableCameras.map(c => c.label));
             } catch (e) {
                 console.error('Failed to enumerate cameras:', e);
             }
@@ -781,10 +817,12 @@
             videoArea.addEventListener('touchmove', handleTouchMove, { passive: false });
             videoArea.addEventListener('touchend', handleTouchEnd, { passive: false });
             videoArea.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+            
+            // Tap to focus
+            videoArea.addEventListener('click', handleTapFocus);
         }
 
         function handleTouchStart(e) {
-            // Store all touches
             for (let i = 0; i < e.changedTouches.length; i++) {
                 const touch = e.changedTouches[i];
                 touches.set(touch.identifier, {
@@ -793,7 +831,6 @@
                 });
             }
             
-            // Check if we have exactly 2 touches (pinch)
             if (touches.size === 2) {
                 isPinching = true;
                 const touchArray = Array.from(touches.values());
@@ -804,9 +841,8 @@
         function handleTouchMove(e) {
             if (!isPinching || touches.size !== 2) return;
             
-            e.preventDefault(); // Prevent scrolling while pinching
+            e.preventDefault();
             
-            // Update touch positions
             for (let i = 0; i < e.changedTouches.length; i++) {
                 const touch = e.changedTouches[i];
                 if (touches.has(touch.identifier)) {
@@ -817,33 +853,24 @@
                 }
             }
             
-            // Calculate new distance
             const touchArray = Array.from(touches.values());
             const newDistance = getDistance(touchArray[0], touchArray[1]);
-            
-            // Calculate zoom change
             const scaleChange = newDistance / lastPinchDistance;
             let newZoom = currentZoom * scaleChange;
             
-            // Clamp zoom
             newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
-            
-            // Apply zoom
             currentZoom = newZoom;
             applyZoom();
             
-            // Update last distance
             lastPinchDistance = newDistance;
         }
 
         function handleTouchEnd(e) {
-            // Remove ended touches
             for (let i = 0; i < e.changedTouches.length; i++) {
                 const touch = e.changedTouches[i];
                 touches.delete(touch.identifier);
             }
             
-            // Reset pinch state if less than 2 touches
             if (touches.size < 2) {
                 isPinching = false;
                 lastPinchDistance = 0;
@@ -856,42 +883,113 @@
             return Math.sqrt(dx * dx + dy * dy);
         }
 
+        // Tap to focus
+        function handleTapFocus(e) {
+            if (isPinching) return;
+            
+            // Show focus indicator
+            const indicator = document.getElementById('focusIndicator');
+            indicator.classList.add('active');
+            setTimeout(() => indicator.classList.remove('active'), 1000);
+            
+            // Try to trigger autofocus if supported
+            if (videoTrack && videoTrack.applyConstraints) {
+                try {
+                    videoTrack.applyConstraints({
+                        advanced: [{ focusMode: 'auto' }]
+                    });
+                } catch (err) {
+                    console.log('Focus not supported');
+                }
+            }
+        }
+
         async function startCamera(facingMode = 'user') {
             try {
                 if (currentStream) {
                     currentStream.getTracks().forEach(track => track.stop());
                 }
 
+                // HD constraints with advanced features
                 let constraints = {
                     video: {
-                        width: { ideal: 1920 }, // Full HD for best far detection
-                        height: { ideal: 1080 },
-                        facingMode: facingMode
+                        width: { ideal: 3840, min: 1920 }, // 4K if available, fallback to 1080p
+                        height: { ideal: 2160, min: 1080 },
+                        facingMode: facingMode,
+                        frameRate: { ideal: 60, min: 30 }, // Higher framerate for smoothness
                     },
                     audio: true
                 };
 
-                if (availableCameras.length > 1) {
-                    const envCamera = availableCameras.find(c => 
+                // Try to get specific high-quality camera
+                if (availableCameras.length > 0) {
+                    // Prefer back camera with high resolution
+                    const backCameras = availableCameras.filter(c => 
                         c.label.toLowerCase().includes('back') || 
                         c.label.toLowerCase().includes('rear') ||
-                        c.label.toLowerCase().includes('telephoto') // Prefer telephoto for far
+                        c.label.toLowerCase().includes('environment')
                     );
                     
-                    if (facingMode === 'environment' && envCamera) {
-                        constraints.video.deviceId = { exact: envCamera.deviceId };
+                    // Sort by label to find highest quality (usually contains resolution info)
+                    const sortedCameras = backCameras.length > 0 ? backCameras : availableCameras;
+                    
+                    if (sortedCameras.length > 0) {
+                        // Use first available, usually the main camera
+                        constraints.video.deviceId = { ideal: sortedCameras[0].deviceId };
                     }
                 }
 
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 currentStream = stream;
+                videoTrack = stream.getVideoTracks()[0]; // Store for focus control
+                
+                // Apply advanced constraints if supported
+                try {
+                    const capabilities = videoTrack.getCapabilities();
+                    const settings = {};
+                    
+                    // Enable autofocus if available
+                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                        settings.focusMode = 'continuous';
+                    } else if (capabilities.focusMode && capabilities.focusMode.includes('auto')) {
+                        settings.focusMode = 'auto';
+                    }
+                    
+                    // Enable image stabilization if available
+                    if (capabilities.stabilizationMode) {
+                        settings.stabilizationMode = 'standard';
+                    }
+                    
+                    // Enable exposure control
+                    if (capabilities.exposureMode && capabilities.exposureMode.includes('continuous')) {
+                        settings.exposureMode = 'continuous';
+                    }
+                    
+                    // Apply settings
+                    if (Object.keys(settings).length > 0) {
+                        await videoTrack.applyConstraints({ advanced: [settings] });
+                        console.log('Applied camera enhancements:', settings);
+                    }
+                    
+                    // Update quality indicator based on actual resolution
+                    const actualSettings = videoTrack.getSettings();
+                    const qualityText = actualSettings.width >= 3840 ? '4K Ultra HD' : 
+                                      actualSettings.width >= 1920 ? 'Full HD' : 'HD';
+                    document.getElementById('qualityIndicator').textContent = qualityText;
+                    
+                } catch (enhanceErr) {
+                    console.log('Camera enhancements not fully supported:', enhanceErr);
+                    document.getElementById('qualityIndicator').textContent = 'HD Quality';
+                }
+                
                 currentFacingMode = facingMode;
                 video.srcObject = stream;
                 
                 video.onloadedmetadata = () => {
                     video.play();
                     
+                    // Set canvas to match video resolution exactly
                     compositeCanvas.width = video.videoWidth;
                     compositeCanvas.height = video.videoHeight;
                     
@@ -901,21 +999,24 @@
                     document.getElementById('statusBadge').classList.remove('offline');
                     document.getElementById('statusBadge').classList.add('active');
                     
-                    // Setup pinch zoom after camera starts
                     setupPinchZoom();
-                    
                     isRunning = true;
                     detect();
                 };
             } catch (e) {
                 console.error('Camera error:', e);
-                // Fallback to lower resolution
+                // Fallback to basic constraints
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: facingMode }, 
+                        video: { 
+                            facingMode: facingMode,
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }, 
                         audio: true 
                     });
                     currentStream = stream;
+                    videoTrack = stream.getVideoTracks()[0];
                     video.srcObject = stream;
                     
                     video.onloadedmetadata = () => {
@@ -927,6 +1028,7 @@
                         document.getElementById('statusBadge').textContent = 'ACTIVE';
                         document.getElementById('statusBadge').classList.remove('offline');
                         document.getElementById('statusBadge').classList.add('active');
+                        document.getElementById('qualityIndicator').textContent = 'Standard Quality';
                         setupPinchZoom();
                         isRunning = true;
                         detect();
@@ -953,14 +1055,32 @@
                     const stream = await navigator.mediaDevices.getUserMedia({
                         video: { 
                             deviceId: { exact: nextCamera.deviceId },
-                            width: { ideal: 1920 },
-                            height: { ideal: 1080 }
+                            width: { ideal: 3840, min: 1920 },
+                            height: { ideal: 2160, min: 1080 }
                         },
                         audio: true
                     });
 
                     currentStream = stream;
+                    videoTrack = stream.getVideoTracks()[0];
                     video.srcObject = stream;
+                    
+                    // Try to apply enhancements to new camera
+                    try {
+                        const capabilities = videoTrack.getCapabilities();
+                        const settings = {};
+                        if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                            settings.focusMode = 'continuous';
+                        }
+                        if (capabilities.stabilizationMode) {
+                            settings.stabilizationMode = 'standard';
+                        }
+                        if (Object.keys(settings).length > 0) {
+                            await videoTrack.applyConstraints({ advanced: [settings] });
+                        }
+                    } catch (err) {
+                        console.log('Enhancements not available on switched camera');
+                    }
                     
                     video.onloadedmetadata = () => {
                         video.play();
@@ -984,6 +1104,10 @@
         }
 
         function drawFrameToCanvas() {
+            // High quality draw with smooth image rendering
+            compositeCtx.imageSmoothingEnabled = true;
+            compositeCtx.imageSmoothingQuality = 'high';
+            
             compositeCtx.save();
             compositeCtx.scale(currentZoom, currentZoom);
             const offsetX = (compositeCanvas.width - compositeCanvas.width / currentZoom) / 2;
@@ -999,7 +1123,7 @@
         function saveCanvasImage() {
             try {
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const filename = `face-detector-photo-${timestamp}.jpg`;
+                const filename = `face-detector-hd-${timestamp}.jpg`;
 
                 compositeCanvas.toBlob((blob) => {
                     if (!blob) {
@@ -1018,7 +1142,7 @@
                     
                     try {
                         a.click();
-                        showToast('Photo saved!');
+                        showToast('HD Photo saved!');
                     } catch (clickErr) {
                         window.open(url, '_blank');
                     }
@@ -1028,7 +1152,7 @@
                         URL.revokeObjectURL(url);
                     }, 1000);
                     
-                }, 'image/jpeg', 0.95);
+                }, 'image/jpeg', 0.98); // Higher quality (98%)
                 
             } catch (err) {
                 showToast('Save failed');
@@ -1048,7 +1172,8 @@
         function startVideoRecording() {
             if (!currentStream) return;
             
-            const canvasStream = compositeCanvas.captureStream(24);
+            // HD recording at 30fps
+            const canvasStream = compositeCanvas.captureStream(30);
             
             const audioTrack = currentStream.getAudioTracks()[0];
             if (audioTrack) {
@@ -1076,9 +1201,10 @@
             }
             
             try {
+                // Higher bitrate for HD recording
                 mediaRecorder = new MediaRecorder(canvasStream, {
                     mimeType: selectedMimeType,
-                    videoBitsPerSecond: 2500000
+                    videoBitsPerSecond: 5000000 // 5 Mbps for HD quality
                 });
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -1101,7 +1227,7 @@
                 updateRecordingTimer();
                 recordingTimer = setInterval(updateRecordingTimer, 1000);
                 
-                showToast('Recording...');
+                showToast('HD Recording...');
             } catch (e) {
                 showToast('Failed to start recording');
             }
@@ -1137,7 +1263,7 @@
                 const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                 const extension = 'webm';
-                const filename = `face-detector-video-${timestamp}.${extension}`;
+                const filename = `face-detector-hd-${timestamp}.${extension}`;
                 
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -1150,7 +1276,7 @@
                 
                 try {
                     a.click();
-                    showToast('Video saved!');
+                    showToast('HD Video saved!');
                 } catch (clickErr) {
                     window.open(url, '_blank');
                 }
@@ -1395,6 +1521,8 @@
             if (!isRunning) return;
 
             // Always draw video frame for smooth display
+            compositeCtx.imageSmoothingEnabled = true;
+            compositeCtx.imageSmoothingQuality = 'high';
             compositeCtx.drawImage(video, 0, 0, compositeCanvas.width, compositeCanvas.height);
             
             // Draw last known results immediately for smoothness
@@ -1418,7 +1546,7 @@
             isProcessing = true;
 
             try {
-                // Use 416 for best far detection
+                // Use 416 for best far detection with HD video
                 const options = new faceapi.TinyFaceDetectorOptions({ 
                     inputSize: 416,
                     scoreThreshold: 0.3
